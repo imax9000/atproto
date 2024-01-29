@@ -20,6 +20,7 @@ export interface IngesterConfigValues {
   ingesterMaxItems?: number
   ingesterCheckItemsEveryN?: number
   ingesterInitialCursor?: number
+  crawlPDSList?: string[]
 }
 
 export class IngesterConfig {
@@ -72,6 +73,7 @@ export class IngesterConfig {
       overrides?.ingesterInitialCursor ||
       maybeParseInt(process.env.INGESTER_INITIAL_CURSOR)
     const ingesterNamespace = overrides?.ingesterNamespace
+    const crawlPDSList = overrides?.crawlPDSList || (process.env.PDS_LIST ? process.env.PDS_LIST.split(',') : [])
     assert(dbPostgresUrl)
     assert(redisHost || (redisSentinelName && redisSentinelHosts?.length))
     assert(repoProvider)
@@ -96,6 +98,7 @@ export class IngesterConfig {
       ingesterMaxItems,
       ingesterCheckItemsEveryN,
       ingesterInitialCursor,
+      crawlPDSList,
     })
   }
 
@@ -173,6 +176,10 @@ export class IngesterConfig {
 
   get ingesterSubLockId() {
     return this.cfg.ingesterSubLockId
+  }
+
+  get crawlPDSList() {
+    return this.cfg.crawlPDSList
   }
 }
 

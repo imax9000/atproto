@@ -8,6 +8,8 @@ import { IngesterSubscription } from './subscription'
 import { authWithApiKey, createBsyncClient } from '../bsync'
 import { LabelSubscription } from './label-subscription'
 import { MuteSubscription } from './mute-subscription'
+import { ListReposSubscription } from './list-repos-subscription'
+import { CrawlSubscription } from './crawl-subscription'
 
 export { IngesterConfig } from './config'
 export type { IngesterConfigValues } from './config'
@@ -45,12 +47,16 @@ export class BskyIngester {
     const muteSubscription = bsyncClient
       ? new MuteSubscription(db, redis, bsyncClient)
       : undefined
+    const listReposSubscription = new ListReposSubscription(db, cfg.crawlPDSList ?? [])
+    const crawlSubscription = new CrawlSubscription(db, redis, {partitionCount: cfg.ingesterPartitionCount})
     const ctx = new IngesterContext({
       db,
       redis,
       cfg,
       labelSubscription,
       muteSubscription,
+      listReposSubscription,
+      crawlSubscription,
     })
     const sub = new IngesterSubscription(ctx, {
       service: cfg.repoProvider,
@@ -90,11 +96,15 @@ export class BskyIngester {
     }, 500)
     await this.ctx.labelSubscription?.start()
     await this.ctx.muteSubscription?.start()
+    await this.ctx.listReposSubscription?.start()
+    await this.ctx.crawlSubscription?.start()
     this.sub.run()
     return this
   }
 
   async destroy(opts?: { skipDb: boolean }): Promise<void> {
+    await this.ctx.listReposSubscription?.destroy()
+    await this.ctx.crawlSubscription?.destroy()
     await this.ctx.muteSubscription?.destroy()
     await this.ctx.labelSubscription?.destroy()
     await this.sub.destroy()
