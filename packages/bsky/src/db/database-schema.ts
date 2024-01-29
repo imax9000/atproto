@@ -32,6 +32,7 @@ import * as suggestedFollow from './tables/suggested-follow'
 import * as suggestedFeed from './tables/suggested-feed'
 import * as taggedSuggestion from './tables/tagged-suggestion'
 import * as blobTakedown from './tables/blob-takedown'
+import * as crawlState from './tables/crawl-state'
 
 export type DatabaseSchemaType = duplicateRecord.PartialDB &
   profile.PartialDB &
@@ -65,7 +66,8 @@ export type DatabaseSchemaType = duplicateRecord.PartialDB &
   suggestedFollow.PartialDB &
   suggestedFeed.PartialDB &
   taggedSuggestion.PartialDB &
-  blobTakedown.PartialDB
+  blobTakedown.PartialDB &
+  crawlState.PartialDB
 
 export type DatabaseSchema = Kysely<DatabaseSchemaType>
 
