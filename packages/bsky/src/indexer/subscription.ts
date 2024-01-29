@@ -106,8 +106,12 @@ export class IndexerSubscription {
             this.repoQueue.add(did, async () => {
               try {
                 await this.indexingSvc.indexRepo(did, undefined)
+                await this.ctx.db.asPrimary().db.updateTable('crawl_state')
+                  .set({completedAt: new Date().toISOString()})
               } catch (err) {
                 log.error({ did }, 'failed to reprocess repo')
+                await this.ctx.db.asPrimary().db.updateTable('crawl_state')
+                  .set({completedAt: new Date().toISOString(), errorMessage: (err as Error).toString()})
               }
             })
 
