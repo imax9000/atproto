@@ -38,6 +38,7 @@ export class IndexerSubscription {
     concurrency: this.opts.concurrency ?? Infinity,
   })
   partitions = new PerfectMap<number, Partition>()
+  crawlPartitions = new PerfectMap<number, Partition>()
   partitionIds = this.opts.partitionIds
   indexingSvc: IndexingService
 
@@ -55,6 +56,7 @@ export class IndexerSubscription {
 
   async processEvents(opts: { signal: AbortSignal }) {
     const done = () => this.destroyed || opts.signal.aborted
+    const batchSize = this.opts.partitionBatchSize ?? 50;
     while (!done()) {
       const results = await this.ctx.redis.readStreams(
         this.partitionIds.map((id) => ({
@@ -63,7 +65,7 @@ export class IndexerSubscription {
         })),
         {
           blockMs: 1000,
-          count: this.opts.partitionBatchSize ?? 50, // events per stream
+          count: batchSize, // events per stream
         },
       )
       if (done()) break
@@ -79,6 +81,50 @@ export class IndexerSubscription {
           })
         }
       }
+
+      if (results.length < batchSize) {
+        const results = await this.ctx.redis.readStreams(
+          this.partitionIds.map((id) => ({
+            key: crawlPartitionKey(id),
+            cursor: this.crawlPartitions.get(id).cursor,
+          })),
+          {
+            blockMs: 10,
+            count: 1,
+          },
+        )
+
+        for (const { key, messages } of results) {
+          const partition = this.crawlPartitions.get(crawlPartitionId(key))
+          for (const msg of messages) {
+            const seq = strToInt(msg.cursor)
+            assert(msg.contents.repo, 'malformed message content')
+            const did = msg.contents.repo.toString()
+            partition.cursor = seq
+            const item = partition.consecutive.push(seq)
+
+            this.repoQueue.add(did, async () => {
+              try {
+                await this.indexingSvc.indexRepo(did, undefined)
+              } catch (err) {
+                log.error({ did }, 'failed to reprocess repo')
+              }
+            })
+
+            const latest = item.complete().at(-1)
+            if (latest !== undefined) {
+              partition.cursorQueue.add(async () => {
+                await this.ctx.redis.trimStream(
+                  crawlPartitionKey(partition.id), latest + 1)
+                  .catch((err) => {
+                    log.error({ err }, 'indexer cursor error')
+                  })
+              })
+            }
+          }
+        }
+      }
+
       await this.repoQueue.main.onEmpty() // backpressure
     }
   }
@@ -90,6 +136,7 @@ export class IndexerSubscription {
           // initialize cursors to 0 (read from beginning of stream)
           for (const id of this.partitionIds) {
             this.partitions.set(id, new Partition(id, 0))
+            this.crawlPartitions.set(id, new Partition(id, 0))
           }
           // process events
           await this.processEvents({ signal })
@@ -111,7 +158,7 @@ export class IndexerSubscription {
       try {
         await this.indexingSvc.indexRepo(did, undefined)
       } catch (err) {
-        log.error({ did }, 'failed to reprocess repo')
+        log.error({ did, err }, 'failed to reprocess repo')
       }
     })
   }
@@ -317,8 +364,17 @@ function partitionId(key: string) {
   return strToInt(key.replace('repo:', ''))
 }
 
+function crawlPartitionId(key: string) {
+  assert(key.startsWith('crawl:'))
+  return strToInt(key.replace('crawl:', ''))
+}
+
 function partitionKey(p: number) {
   return `repo:${p}`
+}
+
+function crawlPartitionKey(p: number) {
+  return `crawl:${p}`
 }
 
 type PreparedCreate = {
