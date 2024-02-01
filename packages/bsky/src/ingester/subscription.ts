@@ -1,5 +1,6 @@
 import {
   Deferrable,
+  HOUR,
   cborEncode,
   createDeferrable,
   ui8ToBuffer,
@@ -265,7 +266,7 @@ class Backpressure {
     while (!ready) {
       ready = await this.check()
       if (!ready) {
-        log.warn(
+        log.trace(
           {
             limit: this.limit,
             total: this.lastTotal,

@@ -73,7 +73,7 @@ export class BskyIngester {
     const { db } = this.ctx
     const pool = db.pool
     this.dbStatsInterval = setInterval(() => {
-      dbLogger.info(
+      dbLogger.trace(
         {
           idleCount: pool.idleCount,
           totalCount: pool.totalCount,
@@ -83,7 +83,7 @@ export class BskyIngester {
       )
     }, 10000)
     this.subStatsInterval = setInterval(() => {
-      log.info(
+      log.trace(
         {
           seq: this.sub.lastSeq,
           streamsLength:

@@ -4,6 +4,7 @@ import { Pool as PgPool, types as pgTypes } from 'pg'
 import DatabaseSchema, { DatabaseSchemaType } from './database-schema'
 import { PgOptions } from './types'
 import { dbLogger } from '../logger'
+import Cursor from 'pg-cursor'
 
 export class Database {
   pool: PgPool
@@ -54,7 +55,7 @@ export class Database {
 
     this.pool = pool
     this.db = new Kysely<DatabaseSchemaType>({
-      dialect: new PostgresDialect({ pool }),
+      dialect: new PostgresDialect({ pool, cursor: Cursor }),
     })
   }
 

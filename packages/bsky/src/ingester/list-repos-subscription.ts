@@ -1,6 +1,6 @@
 import { PrimaryDatabase } from '../db'
 import logger from './logger'
-import { HOUR } from '@atproto/common'
+import { HOUR, MINUTE } from '@atproto/common'
 import AtpAgent from '@atproto/api'
 
 export class ListReposSubscription {
@@ -14,7 +14,7 @@ export class ListReposSubscription {
     public pds: string[],
   ) {
     this.pdsAgents = pds.map((u) => {
-      return new AtpAgent({service: u})
+      return new AtpAgent({ service: u })
     })
   }
 
@@ -23,25 +23,39 @@ export class ListReposSubscription {
   }
 
   poll() {
-    if (this.destroyed) return
+    logger.info('ListReposSubscription.poll start')
+    if (this.destroyed) {
+      logger.info('ListReposSubscription destroyed')
+      return
+    }
     this.promise = this.listRepos()
       .catch((err) =>
         logger.error({ err }, 'failed to list repos'),
       )
       .finally(() => {
-        this.timer = setTimeout(() => this.poll(), 6 * HOUR)
+        this.timer = setTimeout(() => this.poll(), 3 * HOUR)
       })
   }
 
   async listRepos() {
     for (const agent of this.pdsAgents) {
-      const res = await agent.com.atproto.sync.listRepos()
-      const vals = res.data.repos.map((r) => ({did: r.did}))
-      await this.db.asPrimary().db
-        .insertInto('crawl_state')
-        .values(vals)
-        .onConflict((oc) => oc.doNothing())
-        .execute()
+      let cursor: string | undefined = ''
+      let listed = 0, added = 0
+      do {
+        const res = await agent.com.atproto.sync.listRepos({ cursor })
+        const vals = res.data.repos.map((r) => ({ did: r.did }))
+        listed += vals.length
+        if (vals.length > 0) {
+          const res = await this.db.asPrimary().db
+            .insertInto('crawl_state')
+            .values(vals)
+            .onConflict((oc) => oc.doNothing())
+            .execute()
+          added += res.length
+        }
+        cursor = res.data.cursor
+      } while (cursor)
+      logger.info('Completed listing repos from %s: %d listed, %d added', agent.service, listed, added)
     }
   }
 
