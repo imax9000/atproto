@@ -1,7 +1,7 @@
 import assert from 'node:assert'
 import { CID } from 'multiformats/cid'
 import { AtUri } from '@atproto/syntax'
-import { cborDecode, wait, handleAllSettledErrors } from '@atproto/common'
+import { cborDecode, wait, handleAllSettledErrors, SECOND } from '@atproto/common'
 import { DisconnectError } from '@atproto/xrpc-server'
 import {
   WriteOpAction,
@@ -82,8 +82,8 @@ export class IndexerSubscription {
         }
       }
 
-      if (results.length < batchSize) {
-        const results = await this.ctx.redis.readStreams(
+      if (results.length < batchSize * 0.8) {
+        const rs = await this.ctx.redis.readStreams(
           this.partitionIds.map((id) => ({
             key: crawlPartitionKey(id),
             cursor: this.crawlPartitions.get(id).cursor,
@@ -93,8 +93,9 @@ export class IndexerSubscription {
             count: 1,
           },
         )
+        log.trace("Got only %d indexing tasks, starting %d crawling tasks", results.length, rs.length)
 
-        for (const { key, messages } of results) {
+        for (const { key, messages } of rs) {
           const partition = this.crawlPartitions.get(crawlPartitionId(key))
           for (const msg of messages) {
             const seq = strToInt(msg.cursor)
@@ -104,32 +105,14 @@ export class IndexerSubscription {
             const item = partition.consecutive.push(seq)
 
             this.repoQueue.add(did, async () => {
-              try {
-                await this.indexingSvc.indexRepo(did, undefined)
-                await this.ctx.db.asPrimary().db.updateTable('crawl_state')
-                  .set({completedAt: new Date().toISOString()})
-              } catch (err) {
-                log.error({ did }, 'failed to reprocess repo')
-                await this.ctx.db.asPrimary().db.updateTable('crawl_state')
-                  .set({completedAt: new Date().toISOString(), errorMessage: (err as Error).toString()})
-              }
+              await this.handleRepoCrawl(partition, item, did)
             })
-
-            const latest = item.complete().at(-1)
-            if (latest !== undefined) {
-              partition.cursorQueue.add(async () => {
-                await this.ctx.redis.trimStream(
-                  crawlPartitionKey(partition.id), latest + 1)
-                  .catch((err) => {
-                    log.error({ err }, 'indexer cursor error')
-                  })
-              })
-            }
           }
         }
       }
 
-      await this.repoQueue.main.onEmpty() // backpressure
+      await wait(SECOND)
+      await this.repoQueue.main.onIdle() // backpressure
     }
   }
 
@@ -183,6 +166,37 @@ export class IndexerSubscription {
       concurrency: this.opts.concurrency ?? Infinity,
     })
     await this.run()
+  }
+
+  private async handleRepoCrawl(
+    partition: Partition,
+    item: ConsecutiveItem<number>,
+    did: string,
+  ) {
+    try {
+      await this.indexingSvc.indexRepo(did, undefined)
+      await this.ctx.db.asPrimary().db.updateTable('crawl_state')
+        .set({ completedAt: new Date().toISOString() })
+        .where('did', '=', did)
+        .execute()
+    } catch (err) {
+      log.error({ did, err }, 'failed to reprocess repo')
+      await this.ctx.db.asPrimary().db.updateTable('crawl_state')
+        .set({ completedAt: new Date().toISOString(), errorMessage: (err as Error).toString() })
+        .where('did', '=', did)
+        .execute()
+    } finally {
+      const latest = item.complete().at(-1)
+      if (latest !== undefined) {
+        partition.cursorQueue
+          .add(async () => {
+            await this.ctx.redis.trimStream(crawlPartitionKey(partition.id), latest + 1)
+          })
+          .catch((err) => {
+            log.error({ err }, 'indexer cursor error')
+          })
+      }
+    }
   }
 
   private async handleMessage(

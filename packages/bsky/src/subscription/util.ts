@@ -15,8 +15,8 @@ export class PartitionedQueue {
 
   async add(partitionId: string, task: () => Promise<void>) {
     if (this.main.isPaused) return
-    return this.main.add(() => {
-      return this.getPartition(partitionId).add(task)
+    return this.main.add(async () => {
+      return await this.getPartition(partitionId).add(task)
     })
   }
 
